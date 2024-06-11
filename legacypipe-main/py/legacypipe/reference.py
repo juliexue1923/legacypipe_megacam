@@ -162,10 +162,7 @@ def merge_gaia_tycho(gaia, tycho, plots=False, ps=None, targetwcs=None):
     gra  = gaia.ra  + dt * gaia.pmra  / (3600.*1000.) / cosdec
     gdec = gaia.dec + dt * gaia.pmdec / (3600.*1000.)
     # Max Tycho-2 PM is 10"/yr, max |epoch_ra,epoch_dec - mean| = 0.5
-    from astrometry.util.starutil_numpy import radectoxyz, deg2dist, dist2deg, distsq2deg
-    xyz1 = radectoxyz(tycho.ra, tycho.dec)
-    print("First step done!")
-    # I,J,_ = match_radec(tycho.ra, tycho.dec, gra, gdec, 10./3600.,
+    I,J,_ = match_radec(tycho.ra, tycho.dec, gra, gdec, 10./3600.,
                         nearest=True)
     debug('Initially matched', len(I), 'Tycho-2 stars to Gaia stars (10").')
 
@@ -451,8 +448,14 @@ def fix_tycho(tycho):
     tycho.parallax = np.zeros(len(tycho), np.float32)
     # Tycho-2 "supplement" stars, from Hipparcos and Tycho-1 catalogs, have
     # ref_epoch = 0.  Fill in with the 1991.25 epoch of those catalogs.
+    # Also fill in if epochs are nan
+    # And fill in pm = 0 for nan
     tycho.epoch_ra [tycho.epoch_ra  == 0] = 1991.25
     tycho.epoch_dec[tycho.epoch_dec == 0] = 1991.25
+    tycho.epoch_ra [np.isnan(tycho.epoch_ra)] = 1991.25
+    tycho.epoch_dec [np.isnan(tycho.epoch_dec)] = 1991.25
+    tycho.pmra[np.isnan(tycho.pmra)] = 0
+    tycho.pmdec[np.isnan(tycho.pmdec)] = 0
     # Tycho-2 has separate epoch_ra and epoch_dec.
     # Move source to the mean epoch.
     tycho.ref_epoch = (tycho.epoch_ra + tycho.epoch_dec) / 2.

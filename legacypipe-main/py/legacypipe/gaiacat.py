@@ -25,7 +25,7 @@ class GaiaCatalog(HealpixedCatalog):
         range.
         """
         cat = self.get_catalog_in_wcs(self.ccdwcs)
-        print('Found {} good PS1 stars'.format(len(cat)))
+        print('Found {} good Gaia stars'.format(len(cat)))
         if magrange is not None:
             keep = np.where((cat.median[:,ps1cat.ps1band[band]]>magrange[0])*
                             (cat.median[:,ps1cat.ps1band[band]]<magrange[1]))[0]

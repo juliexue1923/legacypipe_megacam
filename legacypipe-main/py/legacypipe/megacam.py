@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import fitsio
+import numpy as np
 
 from legacypipe.image import LegacySurveyImage
 
@@ -11,7 +12,14 @@ class MegaCamImage(LegacySurveyImage):
         u = 25.0,
         r = 25.0,
     )
-       
+      
+    k_ext = dict(# copied from decam
+                 g = 0.173,
+                 r = 0.090,
+                 # From Arjun 2021-03-17 based on DECosmos (calib against SDSS)
+                 u = 0.63
+                 )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.scamp_wcs = None
@@ -58,8 +66,8 @@ class MegaCamImage(LegacySurveyImage):
 
     def compute_filenames(self):
         # Rename to find masks (irafmask) and weight-maps (swarpmask)
-        self.dqfn = self.imgfn.replace('.fits', '.irafmask.fits.gz')
-        self.wtfn = self.imgfn.replace('.fits', '.swarpmask.fits.gz')
+        self.dqfn = self.imgfn.replace('.fits.gz', '.irafmask.fits.gz')
+        self.wtfn = self.imgfn.replace('.fits.gz', '.swarpmask.fits.gz')
         assert(self.dqfn != self.imgfn)
         assert(self.wtfn != self.imgfn)
 
@@ -176,7 +184,34 @@ class MegaCamImage(LegacySurveyImage):
         fwhm = seeing / self.pixscale
         return fwhm
 
-    def colorterm_gaia_to_observed(self, cat, band):
+    def get_photometric_calibrator_cuts(self, name, cat):
+        '''Returns whether to keep sources in the *cat* of photometric calibration
+        stars from, eg, Pan-STARRS1 or SDSS.
+        '''
+        if name == 'delve':
+            return np.ones(len(cat), bool)
+        raise RuntimeError('Unknown photometric calibration set: %s' % name)
+
+    def photometric_calibrator_to_observed(self, name, cat):
+        if name == 'delve':
+            band = self.get_delve_band()
+            return getattr(cat, band)
+        elif name == 'sdss':
+            colorterm = self.colorterm_sdss_to_observed(cat.psfmag, self.band)
+            band = self.get_sdss_band()
+            return cat.psfmag[:, band] + np.clip(colorterm, -1., +1.)
+        else:
+            raise RuntimeError('No photometric conversion from %s to camera' % name)
+    
+    def get_delve_band(self):
+        from legacypipe.delvecat import DELVECatalog
+        # A known filter?
+        if self.band in DELVECatalog.delveband:
+            return DELVECatalog.delveband[self.band]
+        else:
+            raise RuntimeError('This band is not in DELVE. Choose another photometri calibrator catalog.') 
+
+    def colorterm_delve_to_observed(self, cat, band):
         # See, eg, ps1cat.py's ps1_to_decam.
         # "cat" is a table of PS1 stars;
         # Grab the g-i color:

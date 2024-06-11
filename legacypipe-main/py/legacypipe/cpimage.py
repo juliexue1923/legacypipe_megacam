@@ -115,10 +115,6 @@ def validate_version(fn, filetype, expnum, plver, plprocid,
             if strip:
                 val = np.array([str(v).strip() for v in val])
             ok = np.all(val == targetval)
-            print("ok is..", ok)
-            print("targetval is..", targetval)
-            print("val is..", val)
-            print("targetval and val types", type(targetval), type(val))
             if (not ok) and truncated_ok:
                 N = len(targetval)
                 val = np.array([v[:min(len(v),N)] for v in val])

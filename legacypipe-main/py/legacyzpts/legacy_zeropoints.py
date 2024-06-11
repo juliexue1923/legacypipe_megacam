@@ -1128,8 +1128,32 @@ def run_zeropoints(imobj, splinesky=False, sdss_photom=False, ps=None):
                 ('sdss_i', np.float32),
                 ('sdss_z', np.float32),
             ]
+        # we don't have/use proper motions for PS1 or DELVE stars
+        elif name == 'delve':
+            phot.rename('ra',  'ra_now')
+            phot.rename('dec', 'dec_now')
+            phot.ra_delve  = phot.ra_now.copy()
+            phot.dec_delve = phot.dec_now.copy()
+            phot.ra_phot = phot.ra_delve
+            phot.dec_phot = phot.dec_delve
+            phot.delve_objid  = phot.object_id
+            bands = 'gri'
+            for band in bands:
+                i = DELVECatalog.delveband.get(band, None)
+                if i is None:
+                    print('No band', band, 'in the file of used  DELVE catalog')
+                    continue
+                phot.set('delve_'+band.lower(), getattr(phot, DELVECatalog.delveband[band]).astype(np.float32))
+            phot_cols = [
+                ('delve_objid', np.int64),
+                ('ra_delve', np.double),
+                ('dec_delve', np.double),
+                ('delve_g', np.float32),
+                ('delve_r', np.float32),
+                ('delve_i', np.float32),
+            ]
+
         else:
-            # we don't have/use proper motions for PS1 stars
             phot.rename('ra_ok',  'ra_now')
             phot.rename('dec_ok', 'dec_now')
             phot.ra_ps1  = phot.ra_now.copy()
