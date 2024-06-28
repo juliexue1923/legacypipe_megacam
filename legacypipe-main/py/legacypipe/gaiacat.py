@@ -69,7 +69,7 @@ class GaiaCatalog(HealpixedCatalog):
         # Convert to RA,Dec and then to unique healpixes
         ra,dec = wcs.pixelxy2radec(xx.ravel(), yy.ravel())
         healpixes = set()
-        self.indexing = 'nested'
+        #self.indexing = 'nested'
         for r,d in zip(ra,dec):
             healpixes.add(self.healpix_for_radec(r, d))
         # Read catalog in those healpixes

@@ -876,6 +876,7 @@ class LegacySurveyImage(object):
         tim.time = tai
         tim.slice = slc
         tim.zpscale = orig_zpscale
+
         ## orig_sky: the splinesky model, in image counts; divide by
         ## zpscale to get to nanomaggies.
         tim.origsky = orig_sky
@@ -883,6 +884,7 @@ class LegacySurveyImage(object):
         tim.sig1 = self.sig1
         tim.psf_fwhm = psf_fwhm
         tim.psf_sigma = psf_sigma
+        assert(tim.psf_sigma > 0)
         tim.propid = self.propid
         tim.sip_wcs = wcs
         tim.x0,tim.y0 = int(x0),int(y0)

@@ -1950,7 +1950,8 @@ class OneBlob(object):
             tim.sig1 = sig1
             tim.subwcs = wcsobj
             tim.meta = imobj
-            tim.psf_sigma = imobj.fwhm / 2.35
+            tim.psf_sigma = imobj.get_fwhm(imobj.read_image_primary_header(), imobj.read_image_header()) / 2.35
+            assert(tim.psf_sigma > 0)
             tim.dq = dq
             tim.dq_saturation_bits = DQ_BITS['satur']
             tims.append(tim)

@@ -82,6 +82,8 @@ def depthcut(survey, ccds, annotated, tilefile=None, imlist=None):
         return depthcut_mosaic(ccds, annotated, tilefile)
     elif survey == 'hsc':
         return numpy.ones(len(ccds), dtype='bool')
+    elif survey == 'megacam':
+        return numpy.ones(len(ccds), dtype='bool')
     raise ValueError('No such survey?')
 
 def depthcut_90prime_alternative(ccds, annotated, n=6):
@@ -356,6 +358,7 @@ def good_ccd_fraction(survey, ccds):
                'megaprime': 40,
                'panstarrs': 1,
                'suprimecam': 10,
+               'megacam':35, 
     }
 
     nccds = nccdmap[survey]

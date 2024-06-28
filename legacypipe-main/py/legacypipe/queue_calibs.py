@@ -133,6 +133,7 @@ def main(args):
         log('Read', len(B), 'from', opt.bricks)
     else:
         B = survey.get_bricks()
+    print(B)
 
   #  log('Bricks Dec range:', B.dec.min(), B.dec.max())
 

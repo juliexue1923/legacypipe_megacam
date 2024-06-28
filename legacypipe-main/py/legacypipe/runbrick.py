@@ -203,11 +203,12 @@ def stage_tims(W=3600, H=3600, pixscale=0.262, brickname=None,
     debug(len(ccds), 'CCDs touching target WCS')
     survey.drop_cache()
 
-    if 'ccd_cuts' in ccds.get_columns():
-        ccds.cut(ccds.ccd_cuts == 0)
-        debug(len(ccds), 'CCDs survive cuts')
-    else:
-        warnings.warn('Not applying CCD cuts')
+   # if 'ccd_cuts' in ccds.get_columns():
+    #    ccds.cut(ccds.ccd_cuts == 0)
+    #    debug(len(ccds), 'CCDs survive cuts')
+   # else:
+    #    warnings.warn('Not applying CCD cuts')
+    warnings.warn('Not applying CCD cuts')
 
     # Cut on bands to be used
     ccds.cut(np.array([b in bands for b in ccds.filter]))
@@ -381,6 +382,7 @@ def stage_tims(W=3600, H=3600, pixscale=0.262, brickname=None,
             'target_extent', 'ccds', 'bands', 'survey']
     L = locals()
     rtn = dict([(k,L[k]) for k in keys])
+    assert(tim.psf_sigma > 0 for tim in tims)
     return rtn
 
 def _add_stage_version(version_header, short, stagename):

@@ -14,6 +14,7 @@ def create_kdtree(infn, outfn, ccd_cuts):
 
     T = fits_table(infn)
     print('Read', len(T), 'from', infn)
+    print(T.ccd_cuts)
     if ccd_cuts:
         T.cut(T.ccd_cuts == 0)
         print('Cut to', len(T), 'on ccd_cuts')

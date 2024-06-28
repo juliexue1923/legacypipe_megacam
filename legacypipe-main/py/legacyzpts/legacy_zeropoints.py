@@ -872,7 +872,7 @@ def main(args=None):
     tnow = Time()
     print("TIMING:total %s" % (tnow-tbegin,))
 
-def run_zeropoints(imobj, splinesky=False, sdss_photom=False, ps=None):
+def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
     """Computes photometric and astrometric zeropoints for one CCD.
 
     Args:
@@ -1001,27 +1001,30 @@ def run_zeropoints(imobj, splinesky=False, sdss_photom=False, ps=None):
         ccds['zpt'] = zpt
         return ccds, None
 
-    # Load DELVE & Gaia catalogues
+    # Load DELVE/SkyMapper & Gaia catalogues
 
     phot = None
-    if sdss_photom:
+    if smss_photom:
         try:
-            phot = sdsscat(ccdwcs=wcs).get_stars(magrange=None)
+            phot = SMSSCatalog(ccdwcs=wcs).get_stars(magrange=None)
         except OSError as e:
-            print('No SDSS stars found for this image -- outside the SDSS footprint?', e)
+            print('No SkyMapper stars found for this image -- outside the SkyMapper footprint?', e)
     else:
         try:
             phot = DELVECatalog(ccdwcs=wcs).get_stars(magrange=None)
+            #phot = ps1cat(ccdwcs=wcs).get_stars(magrange=None)
         except OSError as e:
             print('No DELVE stars found for this image -- outside the DELVE region selected?', e)
+            #print('No PS1 stars found for this image -- outside the PS1 region selected?', e)
 
     if phot is not None and len(phot) == 0:
         phot = None
 
-    if sdss_photom:
-        name = 'sdss'
+    if smss_photom:
+        name = 'smss'
     else:
         name = 'delve'
+        #name = 'ps1'
 
     if phot is not None:
         phot.cut(imobj.get_photometric_calibrator_cuts(name, phot))

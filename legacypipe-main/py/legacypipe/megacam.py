@@ -8,9 +8,9 @@ from legacypipe.image import LegacySurveyImage
 class MegaCamImage(LegacySurveyImage):
 
     zp0 = dict(
-        g = 25.0,
         u = 25.0,
-        r = 25.0,
+        g = 25.0,
+        r = 25.0
     )
       
     k_ext = dict(# copied from decam
@@ -37,6 +37,10 @@ class MegaCamImage(LegacySurveyImage):
        #     return self._first_header
         self._primary_header = self.read_image_fits()[1].read_header()
         return self._primary_header
+    
+    def get_nominal_pixscale():
+        # from McLeod 2015
+        return 0.16
 
     def get_ccdname(self, primhdr, hdr):
         if 'EXTNAME' in hdr:
@@ -64,10 +68,25 @@ class MegaCamImage(LegacySurveyImage):
         d = self.get_date(primhdr)
         return datetomjd(d)
 
+    def get_band(self, primhdr):
+        band = primhdr['FILTER']
+        band = band.split()[0]
+        if band == 'open,g':
+            return 'g'
+        if band == 'open,r':
+            return 'r'
+        return band
+    
+    def set_ccdzpt(self, ccdzpt):
+        # Adjust zeropoint for exposure time
+        self.ccdzpt = ccdzpt + 2.5 * np.log10(self.exptime)
+
     def compute_filenames(self):
         # Rename to find masks (irafmask) and weight-maps (swarpmask)
-        self.dqfn = self.imgfn.replace('.fits.gz', '.irafmask.fits.gz')
-        self.wtfn = self.imgfn.replace('.fits.gz', '.swarpmask.fits.gz')
+        self.dqfn = self.imgfn.replace('.fits', '.irafmask.fits.gz')
+        self.wtfn = self.imgfn.replace('.fits', '.swarpmask.fits.gz')
+        self.dqfn = self.dqfn.replace('working', 'working/../data_quality_dir')
+        self.wtfn = self.wtfn.replace('working', 'working/../data_quality_dir')
         assert(self.dqfn != self.imgfn)
         assert(self.wtfn != self.imgfn)
 
@@ -153,7 +172,11 @@ class MegaCamImage(LegacySurveyImage):
                     'PV2_0',  'PV2_1', 'PV2_2', 'PV2_4', 'PV2_5', 'PV2_6',
                    # 'PV2_7', 'PV2_8', 'PV2_9', 'PV2_10'
                     ]:
-            hdr[key] = scamp_hdr[key]
+            if key in scamp_hdr.keys():
+                hdr[key] = scamp_hdr[key]
+            else:
+                print("Warning: no " + str(key) + " key. Set to 0.")
+                hdr[key] = 0.
         hdr['PV2_3'] = 0
         wcs = wcs_pv2sip_hdr(hdr)
         return wcs
@@ -173,13 +196,13 @@ class MegaCamImage(LegacySurveyImage):
 
     def get_fwhm(self, primhdr, imghdr):
         seeing = float(primhdr['SEEING'])
-        # print("Seeing is..", seeing)
         # If PsfEx file exists, read FWHM from there
-        if seeing == 0.0:
+        import numpy as np
+        if seeing == 0.0 or seeing < 0.0 or np.isnan(seeing):
             if not hasattr(self, 'merged_psffn'):
                 return super().get_fwhm(primhdr, imghdr)
             psf = self.read_psf_model(0, 0, pixPsf=True)
-            fwhm = psf.fwhm
+            fwhm = psf.fwhm 
             return fwhm
         fwhm = seeing / self.pixscale
         return fwhm

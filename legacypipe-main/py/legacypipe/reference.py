@@ -401,12 +401,21 @@ def fix_tycho(tycho):
     tycho.ref_id = (tycho.tyc1.astype(np.int64)*1000000 +
                     tycho.tyc2.astype(np.int64)*10 +
                     tycho.tyc3.astype(np.int64))
+    # In our Tycho-2 catalog, sigma_* are in mas, legacypipe ones are in arcsec.
+    # And fill in pm = 0 for nan
+    tycho.pm_ra[np.isnan(tycho.pm_ra)] = 0
+    tycho.pm_dec[np.isnan(tycho.pm_dec)] = 0
+    tycho.pm_ra  /= 1000
+    tycho.pm_dec /= 1000
     with np.errstate(divide='ignore'):
-        # In our Tycho-2 catalog, sigma_pm_* are in *arcsec/yr*, Gaia is in mas/yr.
-        tycho.pmra_ivar  = 1./(tycho.sigma_pm_ra  * 1000.)**2
-        tycho.pmdec_ivar = 1./(tycho.sigma_pm_dec * 1000.)**2
-        tycho.ra_ivar  = 1./tycho.sigma_ra **2
-        tycho.dec_ivar = 1./tycho.sigma_dec**2
+        #In our Tycho-2 catalog, sigma_pm_* are in mas/yr, like Gaia.
+        tycho.pmra_ivar  = 1./tycho.sigma_pm_ra **2
+        tycho.pmdec_ivar = 1./tycho.sigma_pm_dec**2
+        # tycho.pmra_ivar  = 1./(tycho.sigma_pm_ra  * 1000.)**2
+        # tycho.pmdec_ivar = 1./(tycho.sigma_pm_dec * 1000.)**2
+        #sigma_* are in mas, Gaia is in deg.
+        tycho.ra_ivar  = 1./(tycho.sigma_ra /1000 /3600)**2
+        tycho.dec_ivar = 1./(tycho.sigma_dec/1000 /3600)**2
     tycho.rename('pm_ra', 'pmra')
     tycho.rename('pm_dec', 'pmdec')
     for c in ['pmra', 'pmdec', 'pmra_ivar', 'pmdec_ivar']:
@@ -449,13 +458,10 @@ def fix_tycho(tycho):
     # Tycho-2 "supplement" stars, from Hipparcos and Tycho-1 catalogs, have
     # ref_epoch = 0.  Fill in with the 1991.25 epoch of those catalogs.
     # Also fill in if epochs are nan
-    # And fill in pm = 0 for nan
     tycho.epoch_ra [tycho.epoch_ra  == 0] = 1991.25
     tycho.epoch_dec[tycho.epoch_dec == 0] = 1991.25
     tycho.epoch_ra [np.isnan(tycho.epoch_ra)] = 1991.25
     tycho.epoch_dec [np.isnan(tycho.epoch_dec)] = 1991.25
-    tycho.pmra[np.isnan(tycho.pmra)] = 0
-    tycho.pmdec[np.isnan(tycho.pmdec)] = 0
     # Tycho-2 has separate epoch_ra and epoch_dec.
     # Move source to the mean epoch.
     tycho.ref_epoch = (tycho.epoch_ra + tycho.epoch_dec) / 2.
