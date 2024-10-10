@@ -75,6 +75,8 @@ class MegaCamImage(LegacySurveyImage):
             return 'g'
         if band == 'open,r':
             return 'r'
+        if band == 'open,u':
+            return 'u'
         return band
     
     def set_ccdzpt(self, ccdzpt):
@@ -195,8 +197,15 @@ class MegaCamImage(LegacySurveyImage):
             return self.scamp_wcs
 
     def get_fwhm(self, primhdr, imghdr):
-        seeing = float(primhdr['SEEING'])
+        if 'SEEING' in primhdr: 
+            seeing = float(primhdr['SEEING'])
         # If PsfEx file exists, read FWHM from there
+        else:
+            if not hasattr(self, 'merged_psffn'):
+                return super().get_fwhm(primhdr, imghdr)
+            psf = self.read_psf_model(0, 0, pixPsf=True)
+            fwhm = psf.fwhm
+            return fwhm
         import numpy as np
         if seeing == 0.0 or seeing < 0.0 or np.isnan(seeing):
             if not hasattr(self, 'merged_psffn'):
@@ -213,26 +222,47 @@ class MegaCamImage(LegacySurveyImage):
         '''
         if name == 'delve':
             return np.ones(len(cat), bool)
+        if name == 'smss':
+            return np.ones(len(cat), bool)
+        if name == 'sdss':
+            return np.ones(len(cat), bool)
         raise RuntimeError('Unknown photometric calibration set: %s' % name)
 
     def photometric_calibrator_to_observed(self, name, cat):
         if name == 'delve':
             band = self.get_delve_band()
             return getattr(cat, band)
+        elif name == 'smss':
+            band = self.get_smss_band()
+            return getattr(cat, band)
         elif name == 'sdss':
-            colorterm = self.colorterm_sdss_to_observed(cat.psfmag, self.band)
             band = self.get_sdss_band()
-            return cat.psfmag[:, band] + np.clip(colorterm, -1., +1.)
+            return getattr(cat, band)
+        #    colorterm = self.colorterm_sdss_to_observed(cat.psfmag, self.band)
+        #    band = self.get_sdss_band()
+        #    return cat.psfmag[:, band] + np.clip(colorterm, -1., +1.)
         else:
             raise RuntimeError('No photometric conversion from %s to camera' % name)
     
+    def get_smss_band(self):
+        from legacypipe.smsscat import SMSSCatalog
+        # A known filter?
+        if self.band in SMSSCatalog.smssband:
+            return SMSSCatalog.smssband[self.band]
+
+    def get_sdss_band(self):
+        from legacypipe.ps1cat import sdsscat
+        # A known filter?
+        if self.band in sdsscat.sdssband:
+            return sdsscat.sdssband[self.band]
+
     def get_delve_band(self):
         from legacypipe.delvecat import DELVECatalog
         # A known filter?
         if self.band in DELVECatalog.delveband:
             return DELVECatalog.delveband[self.band]
         else:
-            raise RuntimeError('This band is not in DELVE. Choose another photometri calibrator catalog.') 
+            raise RuntimeError('This band is not in DELVE. Choose another photometric calibrator catalog.') 
 
     def colorterm_delve_to_observed(self, cat, band):
         # See, eg, ps1cat.py's ps1_to_decam.
@@ -251,3 +281,13 @@ class MegaCamImage(LegacySurveyImage):
         for power,coeff in enumerate(coeffs):
             colorterm += coeff * 1 **power
         return colorterm
+
+    def check_image_header(self, imghdr):
+        # check consistency between the CCDs table and the image header 
+        if 'EXTNAME' in imghdr:
+            e =  imghdr['EXTNAME'].strip().upper()
+        elif 'MEXTNO' in imghdr:
+            ext_num = imghdr['MEXTNO'].strip().upper()
+            e = 'IM' + ext_num
+        if e.strip() != self.ccdname.strip():
+            warnings.warn('Expected header EXTNAME="%s" to match self.ccdname="%s", self.imgfn=%s' % (e.strip(), self.ccdname,self.imgfn))

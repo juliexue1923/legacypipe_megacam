@@ -235,7 +235,7 @@ def psf_zeropoint_cuts(P, pixscale,
         skybr[i] = (sky > skybright.get(f.strip(), 1e6)) or (sky*exptime > 35000)
 
     cuts = [
-        ('not_griz',   np.array([f.strip() not in 'griz' for f in P.filter])),
+    #    ('not_griz',   np.array([f.strip() not in 'griz' for f in P.filter])),
         ('ccdnmatch', P.ccdnphotom < 20),
         ('zpt_small', np.array([zpt < zpt_cut_lo.get(f.strip(),0) for f,zpt in zip(P.filter, ccdzpt)])),
         ('zpt_large', np.array([zpt > zpt_cut_hi.get(f.strip(),100) for f,zpt in zip(P.filter, ccdzpt)])),
@@ -471,11 +471,11 @@ def add_psfzpt_cuts(T, camera, bad_expid, image2coadd='', **kw):
     elif camera == 'megacam':
         g0 = 26.0
         r0 = 26.0
-        u0 = 26.0
-        dg = (-0.25, +0.5)
-        dr = (-0.25, +0.5)
-        du = (-0.25, +0.5)
-        radec_rms = 0.6
+        u0 = 23.0
+        dg = (-0.5, +0.6)
+        dr = (-0.5, +0.6)
+        du = (-2, +3.25)
+        radec_rms = 1.0
         skybright = {}
         zpt_diff_avg = 0.2
         zpt_lo = dict(g=g0+dg[0], r=r0+dr[0], u=u0+du[0])

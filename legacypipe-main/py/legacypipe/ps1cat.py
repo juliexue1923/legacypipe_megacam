@@ -116,13 +116,13 @@ class ps1cat(HealpixedCatalog):
         return cat
 
 class sdsscat(HealpixedCatalog):
-    sdssband = dict(u=0,
-                    g=1,
-                    r=2,
-                    i=3,
-                    z=4,
+    sdssband = dict(u='u',
+                    #g=1,
+                    #r=2,
+                    #i=3,
+                    #z=4,
     )
-    def __init__(self,expnum=None,ccdname=None,ccdwcs=None):
+    def __init__(self,expnum=None,ccdname=None,indexing='nested',ccdwcs=None):
         """
         Read SDSS sources for an exposure number + CCD name or CCD WCS.
 
@@ -134,9 +134,8 @@ class sdsscat(HealpixedCatalog):
         self.sdsscatdir = os.getenv('SDSSCAT_DIR')
         if self.sdsscatdir is None:
             raise ValueError('You must have the SDSSCAT_DIR environment variable set to point to healpixed SDSS catalogs')
-        fnpattern = os.path.join(self.sdsscatdir, 'sdss-hp%(hp)05d.fits')
-        super(sdsscat, self).__init__(fnpattern)
-
+        fnpattern = os.path.join(self.sdsscatdir, 'sdss-%(hp)05d.fits')
+        super(sdsscat, self).__init__(fnpattern,indexing=indexing)
         if ccdwcs is None:
             from legacypipe.survey import LegacySurveyData
             survey = LegacySurveyData()
@@ -148,7 +147,7 @@ class sdsscat(HealpixedCatalog):
 
     def get_catalog_in_wcs(self, wcs, **kwargs):
         cat = super().get_catalog_in_wcs(wcs, **kwargs)
-        cat.psfmag = -2.5 * (np.log10(cat.psfflux) - 9.)
+        # cat.psfmag = -2.5 * (np.log10(cat.psfflux) - 9.)
         return cat
 
     def get_stars(self,magrange=None,band='r'):

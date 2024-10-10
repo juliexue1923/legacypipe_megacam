@@ -4,7 +4,7 @@ from legacypipe.ps1cat import HealpixedCatalog
 
 class SMSSCatalog(HealpixedCatalog):
 
-    delveband = dict(u = "umag")
+    smssband = dict(u = "umag")
 
     def __init__(self, file_prefix=None, indexing=None, ccdwcs=None, **kwargs):
         self.smssdir = os.getenv('SMSS_CAT_DIR')
@@ -15,9 +15,9 @@ class SMSSCatalog(HealpixedCatalog):
         if not indexing in ['nested', 'ring']:
             raise ValueError('Supported values for the SMSS_CAT_SCHEME environment variable or healpix indexing scheme are "nested" or "ring"')
         if file_prefix is None:
-            file_prefix = os.getenv('SMSS_CAT_PREFIX', 'delve')
+            file_prefix = os.getenv('SMSS_CAT_PREFIX', 'smss')
         #
-        fnpattern = os.path.join(self.delvedir, file_prefix + '-%(hp)05d.fits')
+        fnpattern = os.path.join(self.smssdir, file_prefix + '-%(hp)05d.fits')
         super(SMSSCatalog, self).__init__(fnpattern, indexing=indexing, **kwargs)
         if ccdwcs is not None:
             self.ccdwcs = ccdwcs

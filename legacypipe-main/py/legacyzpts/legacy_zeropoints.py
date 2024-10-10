@@ -24,6 +24,7 @@ import legacypipe
 from legacypipe.ps1cat import ps1cat, sdsscat
 from legacypipe.gaiacat import GaiaCatalog
 from legacypipe.delvecat import DELVECatalog
+from legacypipe.smsscat import SMSSCatalog
 from legacypipe.survey import radec_at_mjd, get_git_version
 from legacypipe.cpimage import validate_version
 from legacypipe.survey import LegacySurveyData
@@ -654,7 +655,7 @@ def get_parser():
     parser.add_argument('--fitsverify', default=False, action='store_true', help='Run fitsverify to check ooi, ood, oow files at start.')
     parser.add_argument('--outdir', type=str, default=None, help='Where to write photom and annotated files; default [survey_dir]/zpt')
     parser.add_argument('--sdss-photom', default=False, action='store_true',
-                        help='Use SDSS rather than PS-1 for photometric cal.')
+                        help='Use SkyMapper/SDSS rather than PS-1/DELVE for photometric cal.')
     parser.add_argument('--debug', action='store_true', default=False, help='Write additional files and plots for debugging')
     parser.add_argument('--choose_ccd', action='store', default=None, help='forced to use only the specified ccd')
     parser.add_argument('--prefix', type=str, default='', help='Prefix to prepend to the output files.')
@@ -872,7 +873,7 @@ def main(args=None):
     tnow = Time()
     print("TIMING:total %s" % (tnow-tbegin,))
 
-def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
+def run_zeropoints(imobj, splinesky=False, sdss_photom=False, ps=None):
     """Computes photometric and astrometric zeropoints for one CCD.
 
     Args:
@@ -983,7 +984,7 @@ def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
 
     # Measure the sky brightness and (sky) noise level.
     sky_img, skymed, skyrms = imobj.estimate_sky(img, invvar, dq, primhdr, hdr)
-    zp0 = imobj.nominal_zeropoint(imobj.band)
+    zp0 = imobj.nominal_zeropoint(imobj.get_band(primhdr))
     skybr = zp0 - 2.5*np.log10(skymed / imobj.pixscale / imobj.pixscale / imobj.exptime)
     print('Sky level: %.2f count/pix' % skymed)
     print('Sky brightness: %.3f mag/arcsec^2 (assuming nominal zeropoint)' % skybr)
@@ -1004,9 +1005,10 @@ def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
     # Load DELVE/SkyMapper & Gaia catalogues
 
     phot = None
-    if smss_photom:
+    if sdss_photom:
         try:
-            phot = SMSSCatalog(ccdwcs=wcs).get_stars(magrange=None)
+        #    phot = SMSSCatalog(ccdwcs=wcs).get_stars(magrange=None)
+            phot = sdsscat(ccdwcs=wcs).get_catalog_in_wcs(wcs)
         except OSError as e:
             print('No SkyMapper stars found for this image -- outside the SkyMapper footprint?', e)
     else:
@@ -1020,8 +1022,8 @@ def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
     if phot is not None and len(phot) == 0:
         phot = None
 
-    if smss_photom:
-        name = 'smss'
+    if sdss_photom:
+        name = 'sdss'
     else:
         name = 'delve'
         #name = 'ps1'
@@ -1121,7 +1123,7 @@ def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
                 if i is None:
                     print('No band', band, 'in SDSS catalog')
                     continue
-                phot.set('sdss_'+band.lower(), phot.psfmag[:,i].astype(np.float32))
+                phot.set('sdss_'+band.lower(), getattr(phot, sdsscat.sdssband[band]).astype(np.float32))
             phot_cols = [
                 ('ra_sdss', np.double),
                 ('dec_sdss', np.double),
@@ -1132,6 +1134,31 @@ def run_zeropoints(imobj, splinesky=False, smss_photom=False, ps=None):
                 ('sdss_z', np.float32),
             ]
         # we don't have/use proper motions for PS1 or DELVE stars
+                # we don't have/use proper motions for PS1 stars
+        #    phot.rename('ra',  'ra_now')
+        #    phot.rename('dec', 'dec_now')
+        #    phot.ra_smss  = phot.ra_now.copy()
+        #    phot.dec_smss = phot.dec_now.copy()
+        #    phot.ra_phot = phot.ra_smss
+        #    phot.dec_phot = phot.dec_smss
+        #    phot.smss_objid  = phot.object_id
+        #    bands = 'ugriz'
+        #    for band in bands:
+        #        i = SMSSCatalog.smssband.get(band, None)
+        #        if i is None:
+        #            print('No band', band, 'in SkyMapper catalog')
+        #            continue
+        #        phot.set('smss_'+band.lower(), getattr(phot, SMSSCatalog.smssband[band]).astype(np.float32))
+        #    phot_cols = [
+        #        ('smss_objid', np.int64),
+        #        ('smss_ps1', np.double),
+        #        ('smss_ps1', np.double),
+        #        ('smss_g', np.float32),
+        #        ('smss_r', np.float32),
+        #        ('smss_i', np.float32),
+        #        ('smss_z', np.float32),
+        #        ('smss_u', np.float32),
+        #    ]
         elif name == 'delve':
             phot.rename('ra',  'ra_now')
             phot.rename('dec', 'dec_now')
