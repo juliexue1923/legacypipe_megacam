@@ -2,39 +2,45 @@ import os
 import numpy as np
 from legacypipe.ps1cat import HealpixedCatalog
 
-class SMSSCatalog(HealpixedCatalog):
+class GaiaXPCatalog(HealpixedCatalog):
 
-    smssband = dict(u = "umag", g = "gmag", r = "rmag")
+    gxpband = dict(g = "synth_gmag", r = "synth_rmag", u = "synth_umag")
 
     def __init__(self, file_prefix=None, indexing=None, ccdwcs=None, **kwargs):
-        self.smssdir = os.getenv('SMSS_CAT_DIR')
-        if self.smssdir is None:
-            raise ValueError('You must have the SMSS_CAT_DIR environment variable set to point to healpixed SkyMapper catalogs')
+        self.gxpdir = os.getenv('GXP_CAT_DIR')
+        if self.gxpdir is None:
+            raise ValueError('You must have the GXP_CAT_DIR environment variable set to point to healpixed GaiaXP catalogs')
         if indexing is None:
-            indexing = os.getenv('SMSS_CAT_SCHEME', 'nested')
+            indexing = os.getenv('GXP_CAT_SCHEME', 'nested')
         if not indexing in ['nested', 'ring']:
-            raise ValueError('Supported values for the SMSS_CAT_SCHEME environment variable or healpix indexing scheme are "nested" or "ring"')
+            raise ValueError('Supported values for the GXP_CAT_SCHEME environment variable or healpix indexing scheme are "nested" or "ring"')
         if file_prefix is None:
-            file_prefix = os.getenv('SMSS_CAT_PREFIX', 'smss')
+            file_prefix = os.getenv('GXP_CAT_PREFIX', 'gxp')
         #
-        fnpattern = os.path.join(self.smssdir, file_prefix + '-%(hp)05d.fits')
-        super(SMSSCatalog, self).__init__(fnpattern, indexing=indexing, **kwargs)
+        fnpattern = os.path.join(self.gxpdir, file_prefix + '-%(hp)05d.fits')
+        super(GaiaXPCatalog, self).__init__(fnpattern, indexing=indexing, **kwargs)
         if ccdwcs is not None:
             self.ccdwcs = ccdwcs
 
     def get_stars(self,magrange=None,band='g'):
-        """Return the set of SkyMapper stars on a given CCD with well-measured gri
+        """Return the set of GaiaXP stars on a given CCD with well-measured gri
         magnitudes. Optionally trim the stars to a desired r-band magnitude
         range.
         """
         cat = self.get_catalog_in_wcs(self.ccdwcs)
-        print('Found {} good SkyMapper stars'.format(len(cat)))
-        if magrange is not None:
-            keep = np.where((getattr(cat,SMSSCatalog.smssband[band])>magrange[0])*
-                            (getattr(cat,SMSSCatalog.smssband[band])<magrange[1]))[0]
-            cat = cat[keep]
-            print('Trimming to {} stars with {}=[{},{}]'.
-                  format(len(cat),band,magrange[0],magrange[1]))
+        print('Found {} good GaiaXP stars'.format(len(cat)))
+        #print('The band is',band)
+        # S/N check for u-band
+        if band == 'u':
+            keep = np.where(getattr(cat,'sn_u')>20)
+            #print(keep)
+            cat = cat[keep[0]]
+        #if magrange is not None:
+        #    keep = np.where((getattr(cat,GaiaXPCatalog.gxpband[band])>magrange[0])*
+        #                    (getattr(cat,GaiaXPCatalog.gxpband[band])<magrange[1]))[0]
+        #    cat = cat[keep]
+        #    print('Trimming to {} stars with {}=[{},{}]'.
+        #          format(len(cat),band,magrange[0],magrange[1]))
         return cat
 
     def get_catalog_in_wcs(self, wcs, step=100., margin=10):
@@ -58,3 +64,4 @@ class SMSSCatalog(HealpixedCatalog):
                                (yy >= 1.-margin) * (yy <= H+margin))
         cat.cut(onccd)
         return cat
+

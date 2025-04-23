@@ -469,19 +469,20 @@ def add_psfzpt_cuts(T, camera, bad_expid, image2coadd='', **kw):
                            skybright, zpt_diff_avg, image2coadd=image2coadd, phrms_cut=phrms, **kw)
     
     elif camera == 'megacam':
-        g0 = 26.0
-        r0 = 26.0
-        u0 = 23.0
-        dg = (-0.5, +0.6)
-        dr = (-0.5, +0.6)
-        du = (-2, +3.25)
-        radec_rms = 1.0
+        g0 = 26.66
+        r0 = 26.62
+        u0 = 24.87
+        dg = (-4.0, +0.3)
+        dr = (-3.0, +0.3)
+        du = (-3.0, +0.3)
+        radec_rms = 0.4
         skybright = {}
-        zpt_diff_avg = 0.2
+        zpt_diff_avg = 0.25
+        phrms = 0.2
         zpt_lo = dict(g=g0+dg[0], r=r0+dr[0], u=u0+du[0])
         zpt_hi = dict(g=g0+dg[1], r=r0+dr[1], u=u0+du[1])
         psf_zeropoint_cuts(T, pixscale, zpt_lo, zpt_hi, bad_expid, camera, radec_rms,
-                           skybright, zpt_diff_avg, **kw)
+                           skybright, zpt_diff_avg, phrms_cut=phrms, **kw)
 
     else:
         assert(False)

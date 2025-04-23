@@ -226,6 +226,8 @@ class MegaCamImage(LegacySurveyImage):
             return np.ones(len(cat), bool)
         if name == 'sdss':
             return np.ones(len(cat), bool)
+        if name == 'gxp':
+            return np.ones(len(cat), bool)
         raise RuntimeError('Unknown photometric calibration set: %s' % name)
 
     def photometric_calibrator_to_observed(self, name, cat):
@@ -234,13 +236,16 @@ class MegaCamImage(LegacySurveyImage):
             return getattr(cat, band)
         elif name == 'smss':
             band = self.get_smss_band()
-            return getattr(cat, band)
+        #    return getattr(cat, band)
+            colorterm = self.colorterm_smss_to_observed(cat, self.band)
+            return getattr(cat, band) + np.clip(colorterm, -1., +1.)
         elif name == 'sdss':
             band = self.get_sdss_band()
             return getattr(cat, band)
-        #    colorterm = self.colorterm_sdss_to_observed(cat.psfmag, self.band)
-        #    band = self.get_sdss_band()
-        #    return cat.psfmag[:, band] + np.clip(colorterm, -1., +1.)
+        elif name == 'gxp':
+            band = self.get_gxp_band()
+            colorterm = self.colorterm_gxp_to_observed(cat, self.band)
+            return getattr(cat, band) + colorterm
         else:
             raise RuntimeError('No photometric conversion from %s to camera' % name)
     
@@ -264,22 +269,75 @@ class MegaCamImage(LegacySurveyImage):
         else:
             raise RuntimeError('This band is not in DELVE. Choose another photometric calibrator catalog.') 
 
-    def colorterm_delve_to_observed(self, cat, band):
-        # See, eg, ps1cat.py's ps1_to_decam.
-        # "cat" is a table of PS1 stars;
-        # Grab the g-i color:
-       # g_index = ps1cat.ps1band['g']
-       # i_index = ps1cat.ps1band['i']
-       # gmag = cat[:,g_index]
-       # imag = cat[:,i_index]
-       # gi = gmag - imag
+    def get_gxp_band(self):
+        from legacypipe.gaiaxp_cat import GaiaXPCatalog
+        # A known filter?
+        if self.band in GaiaXPCatalog.gxpband:
+            return GaiaXPCatalog.gxpband[self.band]
 
+    def colorterm_gxp_to_observed(self, cat, band):
+        from legacypipe.gaiaxp_cat import GaiaXPCatalog
+        # See, eg, ps1cat.py's ps1_to_decam.
+        # "cat" is a table of reference stars;
+        # Grab the g-r and u-r color:
+        gmag = getattr(cat, 'synth_gmag')
+        rmag = getattr(cat, 'synth_rmag')
+        umag = getattr(cat, 'synth_umag')
+        gr = gmag - rmag
+        ur = umag - rmag
+
+        # np.polyfit returns coefficients counting from the highest order, but enumerate() pairs the first entry with 0.
+        # As such, reverse the order from np.polyfit
+        u_coeffs = [
+                (-1.1,  2.0, [-0.03874056, 0.04384444, 0.01854843]),
+               # ( 0.5,  2.5, [ -0.0687748, 0.09175484]),
+               # ( 2.5, 4.15, [ 1.93843559, -1.35614424, 0.2572292])
+                ]
+        
+        if band in ['g','r']:
+            colorterm = np.zeros(len(gr))
+            return colorterm
+        if band in ['u']:
+            colorterm = np.zeros(len(ur))
+            for ur_min, ur_max, coeffs in u_coeffs:
+                mask = (ur >= ur_min) & (ur < ur_max)
+                for power, coeff in enumerate(coeffs):
+                    colorterm[mask] += coeff * ur[mask]**power
+                    print(colorterm)
+                    return colorterm
+
+    def colorterm_smss_to_observed(self, cat, band):
+        from legacypipe.smsscat import SMSSCatalog
+        # See, eg, ps1cat.py's ps1_to_decam.
+        # "cat" is a table of reference stars;
+        # Grab the g-r, u-g and u-r color:
+        g_index = 7
+        r_index = 11
+        u_index = 3
+        gmag = getattr(cat, 'gmag')
+        rmag = getattr(cat, 'rmag')
+        umag = getattr(cat, 'umag')
+        gr = gmag - rmag
+        ug = umag - gmag
+        ur = umag - rmag
+        print(gmag, umag)
+
+        # np.polyfit returns coefficients counting from the highest order, but enumerate() pairs the first entry with 0.
+        # As such, reverse the order from np.polyfit
         coeffs = dict(
-            g = [ 0. ]
+            g = [-0.26456767,  0.60549870 ],
+            r = [ 0.06496791, -0.09319692 ],
+            u = [ 0.02854417, -0.02239842 ]
             )[band]
-        colorterm = np.zeros(len(gi))
+
+        # Most are with respect to g-r, some are u-r...
+        color = gr
+        if band in ['u']:
+            color = ur
+
+        colorterm = np.zeros(len(color))
         for power,coeff in enumerate(coeffs):
-            colorterm += coeff * 1 **power
+            colorterm += coeff * color**power
         return colorterm
 
     def check_image_header(self, imghdr):

@@ -322,9 +322,11 @@ class LegacySurveyImage(object):
         if name == 'gaia':
             return np.ones(len(cat), bool)
         raise RuntimeError('Unknown photometric calibration set: %s' % name)
+
     def get_ps1_calibrator_color_range(self):
         # g-i color range to keep
         return 0.4, 2.7
+    
     def photometric_calibrator_to_observed(self, name, cat):
         if name == 'ps1':
             colorterm = self.colorterm_ps1_to_observed(cat.median, self.band)
@@ -357,6 +359,7 @@ class LegacySurveyImage(object):
 
     def colorterm_ps1_to_observed(self, cat, band):
         raise RuntimeError('Not implemented: generic colorterm_ps1_to_observed')
+    
     def colorterm_sdss_to_observed(self, cat, band):
         raise RuntimeError('Not implemented: generic colorterm_sdss_to_observed')
 
