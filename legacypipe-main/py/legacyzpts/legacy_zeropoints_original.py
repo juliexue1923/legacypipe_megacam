@@ -23,9 +23,6 @@ from astrometry.util.starutil_numpy import hmsstring2ra
 import legacypipe
 from legacypipe.ps1cat import ps1cat, sdsscat
 from legacypipe.gaiacat import GaiaCatalog
-# from legacypipe.delvecat import DELVECatalog
-# from legacypipe.smsscat import SMSSCatalog
-from legacypipe.gaiaxp_cat import GaiaXPCatalog
 from legacypipe.survey import radec_at_mjd, get_git_version
 from legacypipe.cpimage import validate_version
 from legacypipe.survey import LegacySurveyData
@@ -37,7 +34,7 @@ def debug(*args):
     log_debug(logger, args)
 
 
-CAMERAS=['decam','mosaic','90prime','megaprime', 'hsc', 'panstarrs', 'wiro', 'suprimecam','megacam']
+CAMERAS=['decam','mosaic','90prime','megaprime', 'hsc', 'panstarrs', 'wiro', 'suprimecam']
 
 def ptime(text,t0):
     tnow=Time()
@@ -80,7 +77,7 @@ def _ccds_table(camera='decam', overrides=None):
         ('ccdnum', 'i2'),
         ('expid', 'S17'),
         ('object', 'S35'),
-        ('propid', 'S10'),
+        ('propid', 'S12'),
         ('filter', 'S4'),
         ('exptime', 'f4'),
         ('mjd_obs', 'f8'),
@@ -228,6 +225,7 @@ def measure_image(img_fn, mp, image_dir='images',
                   run_sky_only=False,
                   survey=None, psfex=True, camera=None,
                   prime_cache=False,
+                  sky_subtract_large_galaxies=True,
                   **measureargs):
     '''Wrapper on the camera-specific classes to measure the CCD-level data on all
     the FITS extensions for a given set of images.
@@ -249,12 +247,13 @@ def measure_image(img_fn, mp, image_dir='images',
         # - all-zero weight map
         if run_calibs_only:
             return
-        debug('%s: Zero exposure time or low-level calibration flagged as bad; skipping image.'
+        print('%s: Zero exposure time or low-level calibration flagged as bad; skipping image.'
               % str(img))
         ccds = _ccds_table(camera)
         ccds['image_filename'] = img_fn
         ccds['err_message'] = 'Failed CP calib, or Exptime=0'
         ccds['zpt'] = 0.
+        set_ccd_metadata(ccds, img, primhdr, None)
         return ccds, None, img
 
     if measureargs['choose_ccd']:
@@ -265,6 +264,13 @@ def measure_image(img_fn, mp, image_dir='images',
         except:
             pass
         extlist = [ccd]
+    elif measureargs['force_cfht_ccds']:
+        old_extlist = img.get_extension_list(debug=measureargs['debug'])
+        extlist = list(range(1, 36+1))
+        #print('Available extension list:', old_extlist)
+        #print('Forced CFHT extension list:', extlist)
+        if old_extlist != extlist:
+            print('Updating extension list based on --force-cfht-ccds')
     else:
         extlist = img.get_extension_list(debug=measureargs['debug'])
 
@@ -286,28 +292,30 @@ def measure_image(img_fn, mp, image_dir='images',
 
     plots = measureargs.get('plots', False)
 
+    run_sky = True
     if run_psf_only:
-        splinesky = False
+        run_sky = False
     if run_sky_only:
         psfex = False
 
-    # Validate the splinesky and psfex merged files, and (re)make them if
+    # Validate the sky and psfex merged files, and (re)make them if
     # they're missing.
-    if splinesky:
+    if run_sky:
         fn = survey.find_file('sky', img=img)
         if (fn is None or
             validate_version(fn, 'table', img.expnum, img.plver, img.plprocid, quiet=quiet)):
-            splinesky = False
+            run_sky = False
     if psfex:
         fn = survey.find_file('psf', img=img)
         if (fn is None or
             validate_version(fn, 'table', img.expnum, img.plver, img.plprocid, quiet=quiet)):
             psfex = False
 
-    if splinesky or psfex:
+    if run_sky or psfex:
         git_version = get_git_version(dirnm=os.path.dirname(legacypipe.__file__))
         imgs = mp.map(run_one_calib, [(img_fn, camera, survey, ext, psfex, splinesky,
-                                       plots, survey_blob_mask, survey_zeropoints, git_version)
+                                       plots, survey_blob_mask, survey_zeropoints, git_version,
+                                       sky_subtract_large_galaxies)
                                       for ext in extlist])
         from legacyzpts.merge_calibs import merge_splinesky, merge_psfex
         class FakeOpts(object):
@@ -315,7 +323,7 @@ def measure_image(img_fn, mp, image_dir='images',
         opts = FakeOpts()
         # Allow some CCDs to be missing, e.g., if the weight map is all zero.
         opts.all_found = False
-        if splinesky:
+        if run_sky:
             skyoutfn = survey.find_file('sky', img=img, use_cache=False)
             ccds = None
             err_splinesky = merge_splinesky(survey, img.expnum, ccds, skyoutfn, opts, imgs=imgs)
@@ -330,7 +338,7 @@ def measure_image(img_fn, mp, image_dir='images',
 
     # Now, if they're still missing it's because the entire exposure is borked
     # (WCS failed, weight maps are all zero, etc.), so exit gracefully.
-    if splinesky:
+    if run_sky:
         skyfn = survey.find_file('sky', img=img)
         if not os.path.exists(skyfn):
             print('Merged splinesky file not found {}'.format(skyfn))
@@ -375,10 +383,10 @@ def measure_image(img_fn, mp, image_dir='images',
         return
 
     rtns = mp.map(run_one_ext, [(img, ext, survey, splinesky,
-                                 measureargs['gxp_photom'], plots)
+                                 measureargs['sdss_photom'],
+                                 measureargs['gaia_photom'], plots)
                                 for ext in extlist])
 
-    print(rtns)
     for ccd,photom in rtns:
         if ccd is not None:
             all_ccds.append(ccd)
@@ -407,13 +415,12 @@ def measure_image(img_fn, mp, image_dir='images',
 
 def run_one_calib(X):
     (img_fn, camera, survey, ext, psfex, splinesky, plots, survey_blob_mask,
-     survey_zeropoints, git_version) = X
+     survey_zeropoints, git_version, sky_subtract_large_galaxies) = X
     img = survey.get_image_object(None, camera=camera,
                                   image_fn=img_fn, image_hdu=ext)
     img.check_for_cached_files(survey)
 
     do_psf = False
-    do_sky = False
     if psfex:
         do_psf = True
         try:
@@ -422,14 +429,13 @@ def run_one_calib(X):
                 do_psf = False
         except:
             pass
-    if splinesky:
-        do_sky = True
-        try:
-            sky = img.read_sky_model()
-            if sky is not None:
-                do_sky = False
-        except:
-            pass
+    do_sky = True
+    try:
+        sky = img.read_sky_model()
+        if sky is not None:
+            do_sky = False
+    except:
+        pass
 
     if (not do_psf) and (not do_sky):
         # Nothing to do!
@@ -463,18 +469,22 @@ def run_one_calib(X):
         if plots:
             from astrometry.util.plotutils import PlotSequence
             ps = PlotSequence('plots-%s-%i-%s' % (camera, img.expnum, ext))
+
+        subtract_largegalaxies = have_zpt
+        if not sky_subtract_large_galaxies:
+            subtract_largegalaxies = False
         img.run_calibs(psfex=do_psf, sky=do_sky, splinesky=True,
                        git_version=git_version, survey=survey, ps=ps,
                        survey_blob_mask=survey_blob_mask,
                        halos=have_zpt,
-                       subtract_largegalaxies=have_zpt)
+                       subtract_largegalaxies=subtract_largegalaxies)
     except ZeroWeightError:
         print('Got ZeroWeightError running calibs for', img, 'but continuing')
     # Otherwise, let the exception propagate.
     return img
 
 def run_one_ext(X):
-    img, ext, survey, splinesky, gxp_photom, plots = X
+    img, ext, survey, splinesky, sdss_photom, gaia_photom, plots = X
 
     ps = None
     if plots:
@@ -484,7 +494,8 @@ def run_one_ext(X):
     img = survey.get_image_object(None, camera=img.camera,
                                   image_fn=img.image_filename, image_hdu=ext,
                                   prime_cache=False)
-    return run_zeropoints(img, splinesky=splinesky, gxp_photom=gxp_photom, ps=ps)
+    return run_zeropoints(img, splinesky=splinesky, sdss_photom=sdss_photom,
+                          gaia_photom=gaia_photom, ps=ps)
 
 class outputFns(object):
     def __init__(self, imgfn, outdir, camera, image_dir='images', debug=False):
@@ -655,10 +666,14 @@ def get_parser():
     parser.add_argument('--prime-cache', default=False, action='store_true', help='Copy image (ooi, ood, oow) files to --cache-dir before starting.')
     parser.add_argument('--fitsverify', default=False, action='store_true', help='Run fitsverify to check ooi, ood, oow files at start.')
     parser.add_argument('--outdir', type=str, default=None, help='Where to write photom and annotated files; default [survey_dir]/zpt')
-    parser.add_argument('--gxp-photom', default=False, action='store_true',
-                        help='Use SkyMapper/SDSS/GaiaXP rather than PS-1/DELVE for photometric cal.')
+    parser.add_argument('--sdss-photom', default=False, action='store_true',
+                        help='Use SDSS rather than PS-1 for photometric cal.')
+    parser.add_argument('--gaia-photom', default=False, action='store_true',
+                        help='Use Gaia rather than PS-1 for photometric cal.')
     parser.add_argument('--debug', action='store_true', default=False, help='Write additional files and plots for debugging')
     parser.add_argument('--choose_ccd', action='store', default=None, help='forced to use only the specified ccd')
+    parser.add_argument('--force-cfht-ccds', action='store_true', default=False,
+                        help='CFHT: force using the 36 non-"ears" CCDs')
     parser.add_argument('--prefix', type=str, default='', help='Prefix to prepend to the output files.')
     parser.add_argument('--verboseplots', action='store_true', default=False, help='use to plot FWHM Moffat PSF fits to the 20 brightest stars')
     parser.add_argument('--calibrate', action='store_true',
@@ -680,6 +695,10 @@ def get_parser():
                         help='The base directory to search for survey-ccds files for subtracting star halos before doing sky calibration.')
     parser.add_argument('--calibdir', default=None,
                         help='if None will use LEGACY_SURVEY_DIR/calib, e.g. /global/cscratch1/sd/desiproc/dr5-new/calib')
+    parser.add_argument('--sky-no-subtract-large-galaxies',
+                        dest='sky_subtract_large_galaxies',
+                        default=True, action='store_false',
+                        help='For sky calibs: do not subtract large galaxies first')
     parser.add_argument('--no-check-photom', dest='check_photom', action='store_false',
                         help='Do not check for photom file when deciding if this file is done or not.')
     parser.add_argument('--threads', default=None, type=int,
@@ -874,7 +893,40 @@ def main(args=None):
     tnow = Time()
     print("TIMING:total %s" % (tnow-tbegin,))
 
-def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
+def set_ccd_metadata(ccds, img, primhdr, hdr):
+    # init_ccd():
+    namemap = { 'object': 'obj',
+                'filter': 'band',
+                'image_hdu': 'hdu',
+                'mjd_obs': 'mjdobs',
+    }
+    for key in ['image_filename', 'image_hdu', 'camera', 'expnum', 'plver', 'procdate',
+                'plprocid', 'ccdname', 'propid', 'exptime', 'mjd_obs',
+                'pixscale', 'width', 'height', 'fwhm', 'filter']:
+        val = getattr(img, namemap.get(key, key), None)
+        print('Setting', key, '=', val)
+        if val is None:
+            continue
+        ccds[key] = val
+
+    ra_bore, dec_bore = img.get_radec_bore(primhdr)
+    ccds['ra_bore'],ccds['dec_bore'] = ra_bore, dec_bore
+    # hdr can be None
+    try:
+        airmass = img.get_airmass(primhdr, hdr, ra_bore, dec_bore)
+        ccds['airmass'] = airmass
+    except:
+        pass
+    ccds['ha'] = img.get_ha_deg(primhdr)
+    try:
+        ccds['gain'] = img.get_gain(primhdr, hdr)
+    except:
+        pass
+    ccds['object'] = img.get_object(primhdr)
+    if hdr is not None:
+        ccds['AVSKY'] = hdr.get('AVSKY', np.nan)
+
+def run_zeropoints(imobj, splinesky=False, sdss_photom=False, gaia_photom=False, ps=None):
     """Computes photometric and astrometric zeropoints for one CCD.
 
     Args:
@@ -889,32 +941,21 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
     # Initialize CCDs (annotated) table data structure.
     ccds = _ccds_table(imobj.camera, overrides=imobj.override_ccd_table_types())
 
-    # init_ccd():
-    namemap = { 'object': 'obj',
-                'filter': 'band',
-                'image_hdu': 'hdu',
-                'mjd_obs': 'mjdobs',
-    }
-    for key in ['image_filename', 'image_hdu', 'camera', 'expnum', 'plver', 'procdate',
-                'plprocid', 'ccdname', 'propid', 'exptime', 'mjd_obs',
-                'pixscale', 'width', 'height', 'fwhm', 'filter']:
-        val = getattr(imobj, namemap.get(key, key))
-        print('Setting', key, '=', val)
-        ccds[key] = val
-
     primhdr = imobj.read_image_primary_header()
     hdr = imobj.read_image_header(ext=imobj.hdu)
-
+    set_ccd_metadata(ccds, imobj, primhdr, hdr)
+    # needed below...
     ra_bore, dec_bore = imobj.get_radec_bore(primhdr)
-    ccds['ra_bore'],ccds['dec_bore'] = ra_bore, dec_bore
     airmass = imobj.get_airmass(primhdr, hdr, ra_bore, dec_bore)
-    ccds['airmass'] = airmass
-    ha_str = primhdr['HA']
-    ccds['ha'] = hmsstring2ra(ha_str)
-    ccds['gain'] = imobj.get_gain(primhdr, hdr)
-    ccds['object'] = imobj.get_object(primhdr)
 
-    ccds['AVSKY'] = hdr.get('AVSKY', np.nan)
+    # Quick check for PsfEx file -- moved before WCS, for CFHT's benefit
+    normalizePsf = True
+    try:
+        px0 = py0 = 0
+        psf = imobj.read_psf_model(px0, py0, pixPsf=True, normalizePsf=normalizePsf)
+    except RuntimeError as e:
+        print('Failed to read PSF model: %s' % e)
+        return None, None
 
     for ccd_col,val in zip(['cd1_1', 'cd1_2', 'cd2_1', 'cd2_2'],
                            imobj.get_cd_matrix(primhdr, hdr)):
@@ -940,13 +981,6 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         x0,x1 = sx.start, sx.stop
         print('good image slice:', slc, '-- shifting WCS by', x0, y0)
         wcs = wcs.get_subimage(x0, y0, int(x1-x0), int(y1-y0))
-
-    # Quick check for PsfEx file
-    try:
-        psf = imobj.read_psf_model(x0, y0, pixPsf=True)
-    except RuntimeError as e:
-        print('Failed to read PSF model: %s' % e)
-        return None, None
 
     # for cases (eg HSC, Pan-STARRS) that lack a SEEING/FWHM header and we have to fetch
     # from the PsfEx file.
@@ -985,7 +1019,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
 
     # Measure the sky brightness and (sky) noise level.
     sky_img, skymed, skyrms = imobj.estimate_sky(img, invvar, dq, primhdr, hdr)
-    zp0 = imobj.nominal_zeropoint(imobj.get_band(primhdr))
+    zp0 = imobj.nominal_zeropoint(imobj.band)
     skybr = zp0 - 2.5*np.log10(skymed / imobj.pixscale / imobj.pixscale / imobj.exptime)
     print('Sky level: %.2f count/pix' % skymed)
     print('Sky brightness: %.3f mag/arcsec^2 (assuming nominal zeropoint)' % skybr)
@@ -1003,46 +1037,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         ccds['zpt'] = zpt
         return ccds, None
 
-    # Load DELVE/SkyMapper/GaiaXP & Gaia catalogues
-
-    phot = None
-    if gxp_photom:
-        try:
-            phot = GaiaXPCatalog(ccdwcs=wcs).get_stars(magrange=None,band=ccds['filter'])
-        #    phot = sdsscat(ccdwcs=wcs).get_catalog_in_wcs(wcs)
-        except OSError as e:
-            print('No GaiaXP stars found for this image -- outside the GaiaXP footprint?', e)
-    else:
-        try:
-            phot = DELVECatalog(ccdwcs=wcs).get_stars(magrange=None)
-            #phot = ps1cat(ccdwcs=wcs).get_stars(magrange=None)
-        except OSError as e:
-            print('No DELVE stars found for this image -- outside the DELVE region selected?', e)
-            #print('No PS1 stars found for this image -- outside the PS1 region selected?', e)
-
-    if phot is not None and len(phot) == 0:
-        phot = None
-
-    if gxp_photom:
-        name = 'gxp'
-    else:
-        name = 'delve'
-        #name = 'ps1'
-
-    if phot is not None:
-        phot.cut(imobj.get_photometric_calibrator_cuts(name, phot))
-        if len(phot) == 0:
-            phot = None
-        else:
-            # Convert to Legacy Survey mags
-            phot.legacy_survey_mag = imobj.photometric_calibrator_to_observed(name, phot)
-            # print(phot.legacy_survey_mag)
-            I = np.isfinite(phot.legacy_survey_mag)
-            # print(I)
-            phot.cut(I)
-            print(len(phot), 'photometric calibrator stars')
-            if len(phot) == 0:
-                phot = None
+    # Load Gaia & photometric calibrator catalogues
 
     gaia = GaiaCatalog().get_catalog_in_wcs(wcs)
     assert(gaia is not None)
@@ -1051,16 +1046,52 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
     assert(gaia is not None)
     print(len(gaia), 'Gaia stars')
 
+    phot = None
+    if sdss_photom:
+        try:
+            phot = sdsscat(ccdwcs=wcs).get_stars(magrange=None)
+        except OSError as e:
+            print('No SDSS stars found for this image -- outside the SDSS footprint?', e)
+    elif gaia_photom:
+        # ....???
+        phot = gaia
+    else:
+        try:
+            phot = ps1cat(ccdwcs=wcs).get_stars(magrange=None)
+        except OSError as e:
+            print('No PS1 stars found for this image -- outside the PS1 footprint, or in the Galactic plane?', e)
+
+    if phot is not None and len(phot) == 0:
+        phot = None
+
+    if sdss_photom:
+        name = 'sdss'
+    elif gaia_photom:
+        name = 'gaia'
+    else:
+        name = 'ps1'
+
+    if phot is not None:
+        phot.use_for_photometry = imobj.get_photometric_calibrator_cuts(name, phot)
+        if len(phot) == 0 or np.sum(phot.use_for_photometry) == 0:
+            phot = None
+        else:
+            # Convert to Legacy Survey mags
+            phot.legacy_survey_mag = imobj.photometric_calibrator_to_observed(name, phot)
+            print(len(phot), 'photometric calibrator stars')
+
     maxgaia = 1000
     if len(gaia) > maxgaia:
-        I = np.argsort(gaia.phot_g_mean_mag)
+        # omit (downgrade) those with G=0.0 ...
+        I = np.argsort(gaia.phot_g_mean_mag + 100.*(gaia.phot_g_mean_mag == 0))
         gaia.cut(I[:maxgaia])
         print('Cut to', len(gaia), 'Gaia stars with G mag in range %.2f to %.2f' %
               (gaia.phot_g_mean_mag[0], gaia.phot_g_mean_mag[-1]))
 
     maxphot = 1000
     if phot is not None and len(phot) > maxphot:
-        I = np.argsort(phot.legacy_survey_mag)
+        # (use_for_photometry first; brightest to faintest)
+        I = np.argsort(phot.legacy_survey_mag + 100 * ~phot.use_for_photometry)
         phot.cut(I[:maxphot])
         print('Cut to', len(phot), 'photometric calibrator stars with mag in range %.2f to %.2f' %
               (phot.legacy_survey_mag[0], phot.legacy_survey_mag[-1]))
@@ -1108,7 +1139,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         magerr = np.abs(2.5/np.log(10.) * 1./np.fmax(1., sn))
         gaia.set('phot_%s_mean_mag_error' % b, magerr)
     gaia.flux0 = np.ones(len(gaia), np.float32)
-    # we set 'astrom' and omit 'photom'; it will get filled in with zeros.
+    # we set 'astrom' and omit 'use_for_photometry'; it will get filled in with zeros.
     gaia.astrom = np.ones(len(gaia), bool)
 
     refs = [gaia]
@@ -1119,78 +1150,34 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         phot.flux0 = (10.**((zp0 - phot.legacy_survey_mag) / 2.5) * imobj.exptime
                      ).astype(np.float32)
 
-        if gxp_photom:
-        #    phot.ra_sdss  = phot.ra.copy()
-        #    phot.dec_sdss = phot.dec.copy()
-        #    phot.ra_phot = phot.ra_sdss
-        #    phot.dec_phot = phot.dec_sdss
-        #    bands = 'ugriz'
-        #    for band in bands:
-        #        i = sdsscat.sdssband.get(band, None)
-        #        if i is None:
-        #            print('No band', band, 'in SDSS catalog')
-        #            continue
-        #        phot.set('sdss_'+band.lower(), getattr(phot, sdsscat.sdssband[band]).astype(np.float32))
-        #    phot_cols = [
-        #        ('ra_sdss', np.double),
-        #        ('dec_sdss', np.double),
-        #        ('sdss_u', np.float32),
-        #        ('sdss_g', np.float32),
-        #        ('sdss_r', np.float32),
-        #        ('sdss_i', np.float32),
-        #        ('sdss_z', np.float32),
-        #    ]
-        # we don't have/use proper motions for PS1 or DELVE stars
-                # we don't have/use proper motions for PS1 stars
-            phot.rename('ra',  'ra_now')
-            phot.rename('dec', 'dec_now')
-            phot.ra_gxp  = phot.ra_now.copy()
-            phot.dec_gxp = phot.dec_now.copy()
-            phot.ra_phot = phot.ra_gxp
-            phot.dec_phot = phot.dec_gxp
-            phot.gxp_objid  = phot.source_id
+        match_phot = True
+
+        if sdss_photom:
+            phot.ra_sdss  = phot.ra.copy()
+            phot.dec_sdss = phot.dec.copy()
+            phot.ra_phot = phot.ra_sdss
+            phot.dec_phot = phot.dec_sdss
             bands = 'ugriz'
             for band in bands:
-                i = GaiaXPCatalog.gxpband.get(band, None)
+                i = sdsscat.sdssband.get(band, None)
                 if i is None:
-                    print('No band', band, 'in GaiaXP catalog')
+                    print('No band', band, 'in SDSS catalog')
                     continue
-                phot.set('gxp_'+band.lower(), getattr(phot, GaiaXPCatalog.gxpband[band]).astype(np.float32))
+                phot.set('sdss_'+band.lower(), phot.psfmag[:,i].astype(np.float32))
             phot_cols = [
-                ('gxp_objid', np.int64),
-                ('ra_gxp', np.double),
-                ('dec_gxp', np.double),
-                ('gxp_g', np.float32),
-                ('gxp_r', np.float32),
-                ('gxp_i', np.float32),
-                ('gxp_z', np.float32),
-                ('gxp_u', np.float32),
+                ('ra_sdss', np.double),
+                ('dec_sdss', np.double),
+                ('sdss_u', np.float32),
+                ('sdss_g', np.float32),
+                ('sdss_r', np.float32),
+                ('sdss_i', np.float32),
+                ('sdss_z', np.float32),
             ]
-        elif name == 'delve':
-            phot.rename('ra',  'ra_now')
-            phot.rename('dec', 'dec_now')
-            phot.ra_delve  = phot.ra_now.copy()
-            phot.dec_delve = phot.dec_now.copy()
-            phot.ra_phot = phot.ra_delve
-            phot.dec_phot = phot.dec_delve
-            phot.delve_objid  = phot.object_id
-            bands = 'gri'
-            for band in bands:
-                i = DELVECatalog.delveband.get(band, None)
-                if i is None:
-                    print('No band', band, 'in the file of used  DELVE catalog')
-                    continue
-                phot.set('delve_'+band.lower(), getattr(phot, DELVECatalog.delveband[band]).astype(np.float32))
-            phot_cols = [
-                ('delve_objid', np.int64),
-                ('ra_delve', np.double),
-                ('dec_delve', np.double),
-                ('delve_g', np.float32),
-                ('delve_r', np.float32),
-                ('delve_i', np.float32),
-            ]
-
+        elif gaia_photom:
+            match_phot = False
+            phot_cols = []
         else:
+            # we don't have/use proper motions for PS1 stars
             phot.rename('ra_ok',  'ra_now')
             phot.rename('dec_ok', 'dec_now')
             phot.ra_ps1  = phot.ra_now.copy()
@@ -1198,6 +1185,8 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
             phot.ra_phot = phot.ra_ps1
             phot.dec_phot = phot.dec_ps1
             phot.ps1_objid  = phot.obj_id
+            # gri
+            phot.ps1_mags_ok = ((phot.nmag_ok[:,0] > 0) * (phot.nmag_ok[:,1] > 0) * (phot.nmag_ok[:,2] > 0))
             bands = 'grizY'
             for band in bands:
                 i = ps1cat.ps1band.get(band, None)
@@ -1214,37 +1203,36 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
                 ('ps1_i', np.float32),
                 ('ps1_z', np.float32),
                 ('ps1_y', np.float32),
+                ('ps1_mags_ok', bool),
             ]
 
-        # we set 'photom' and omit 'astrom'; it will get filled in with zeros.
-        phot.photom = np.ones (len(phot), bool)
+        if match_phot:
+            # Match photometric stars to Gaia stars within 1".
+            I,J,_ = match_radec(gaia.ra_gaia, gaia.dec_gaia,
+                                phot.ra_phot, phot.dec_phot, 1./3600.,
+                                nearest=True)
+            print(len(I), 'of', len(gaia), 'Gaia and', len(phot), 'photometric cal stars matched')
 
-        # Match photometric stars to Gaia stars within 1".
-        I,J,_ = match_radec(gaia.ra_gaia, gaia.dec_gaia,
-                            phot.ra_phot, phot.dec_phot, 1./3600.,
-                            nearest=True)
-        print(len(I), 'of', len(gaia), 'Gaia and', len(phot), 'photometric cal stars matched')
+            # Merged = photocal stars + unmatched Gaia
+            if len(I):
+                # Merge columns for the matched stars
+                for c in gaia.get_columns():
+                    G = gaia.get(c)
+                    # If column exists in both (eg, ra_now, dec_now), override
+                    # the PHOT value with the Gaia value
+                    if c in phot.get_columns():
+                        X = phot.get(c)
+                    else:
+                        X = np.zeros(len(phot), G.dtype)
+                    X[J] = G[I]
+                    phot.set(c, X)
+                # unmatched Gaia stars
+                unmatched = np.ones(len(gaia), bool)
+                unmatched[I] = False
+                gaia.cut(unmatched)
+                del unmatched
 
-        # Merged = photocal stars + unmatched Gaia
-        if len(I):
-            # Merge columns for the matched stars
-            for c in gaia.get_columns():
-                G = gaia.get(c)
-                # If column exists in both (eg, ra_now, dec_now), override
-                # the PHOT value with the Gaia value; except for "photom".
-                if c in phot.get_columns():
-                    X = phot.get(c)
-                else:
-                    X = np.zeros(len(phot), G.dtype)
-                X[J] = G[I]
-                phot.set(c, X)
-            # unmatched Gaia stars
-            unmatched = np.ones(len(gaia), bool)
-            unmatched[I] = False
-            gaia.cut(unmatched)
-            del unmatched
-
-        refs.append(phot)
+            refs.append(phot)
     else:
         phot_cols = []
 
@@ -1271,7 +1259,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
              ('legacy_survey_mag', np.float32),
              ('psfmag', np.float32),
              ('astrom', bool),
-             ('photom', bool),
+             ('use_for_photometry', bool),
             ])
 
     refcols = refs.get_columns()
@@ -1284,7 +1272,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         if not c in wantcols:
             refs.delete_column(c)
             continue
-    
+
     Rfit = 30
 
     if ps is not None:
@@ -1292,6 +1280,19 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         s1 = imobj.sig1 * imobj.exptime
         print('s1:', s1)
         import pylab as plt
+        plt.figure(figsize=(10,10))
+        plt.clf()
+        plt.hist(fit_img.ravel() / s1, range=(-5., +10), bins=20)
+        plt.title('Sky-subtracted image pixels, in sigmas')
+        ps.savefig()
+        plt.clf()
+        plt.hist(fit_img.ravel(), range=np.percentile(fit_img.ravel(), [5,98]), bins=20)
+        plt.title('Sky-subtracted image pixels, in counts')
+        plt.axvline(-s1, color='r')
+        plt.axvline(+s1, color='r')
+        plt.axvline(-2.*s1, color='r')
+        plt.axvline(+2.*s1, color='r')
+        ps.savefig()
         # Show PSF model across the image
         plt.clf()
         h,w = imobj.shape
@@ -1327,31 +1328,14 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         plt.xticks([]); plt.yticks([])
         ps.savefig()
 
-        plt.figure(figsize=(10,10))
-        plt.clf()
-        plt.hist(fit_img.ravel() / s1, range=(-5., +10), bins=20)
-        plt.title('Sky-subtracted image pixels, in sigmas')
-        ps.savefig()
-        plt.clf()
-        plt.hist(fit_img.ravel(), range=np.percentile(fit_img.ravel(), [5,98]), bins=20)
-        plt.title('Sky-subtracted image pixels, in counts')
-        plt.axvline(-s1, color='r')
-        plt.axvline(+s1, color='r')
-        plt.axvline(-2.*s1, color='r')
-        plt.axvline(+2.*s1, color='r')
-        ps.savefig()
-
         plt.clf()
         plt.imshow(fit_img, interpolation='nearest', origin='lower',
                    vmin=-2.*s1, vmax=10.*s1, cmap='gray')
         ax = plt.axis()
         ok,x,y = wcs.radec2pixelxy(gaia.ra_now, gaia.dec_now)
         Ibright = np.argsort(gaia.phot_g_mean_mag)[:5]
-        refphots =(refs.gxp_objid > 0)
-        ok2,x2,y2 = wcs.radec2pixelxy(refs[refphots].ra_now, refs[refphots].dec_now)
         plt.plot(x-1., y-1., 'o', mec='r', mfc='none')
         plt.plot(x[Ibright]-1., y[Ibright]-1., 'o', mec='orange', ms=20, mfc='none')
-        plt.plot(x2-1., y2-1., 'o', mec='blue', ms=15, mfc='none')
         plt.axis(ax)
         plt.title('Before fitting Gaia sources')
         ps.savefig()
@@ -1389,7 +1373,7 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         # Run a source detection on the image and cross-match with Gaia star positions.
         from scipy.ndimage import gaussian_filter
         from scipy.ndimage import binary_dilation, binary_fill_holes
-        from scipy.ndimage.measurements import label, find_objects
+        from scipy.ndimage import label, find_objects
         print('FWHM', imobj.fwhm)
         psf_sigma = imobj.fwhm / 2.35
         psfnorm = 1./(2. * np.sqrt(np.pi) * psf_sigma)
@@ -1471,8 +1455,8 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         ps.savefig()
 
     # Run tractor fitting on the ref stars, using the PsfEx model.
-    phot = tractor_fit_sources(imobj, wcs, refs.ra_now, refs.dec_now, refs.flux0,
-                               fit_img, ierr, psf, x0, y0)
+    phot,mods = tractor_fit_sources(imobj, wcs, refs.ra_now, refs.dec_now, refs.flux0,
+                                    fit_img, ierr, psf, x0, y0, Rfit=Rfit, ps=ps)
     print('Got photometry results for', len(phot), 'reference stars')
     if len(phot) == 0:
         return None, None
@@ -1486,6 +1470,60 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
         phot.flux_sn = (phot.flux / phot.dflux)
     phot.flux_sn[phot.dflux == 0] = 0.
 
+    # print('Refs:')
+    # refs.about()
+    # print('Phot:')
+    # phot.about()
+
+    if ps is not None:
+        sourceid_to_index = dict([(s,i) for i,s in enumerate(refs.gaia_sourceid)])
+        plt.clf()
+        plt.subplots_adjust(hspace=0, wspace=0)
+        R,C = 4,5
+        for k,sourceid in enumerate(plot_gaia_sourceid):
+            i = sourceid_to_index.get(sourceid, -1)
+            if i == -1:
+                continue
+            ok,xc,yc = wcs.radec2pixelxy(phot.ra_fit[i], phot.dec_fit[i])
+            xc = int(xc)
+            yc = int(yc)
+            h,w = fit_img.shape
+            if xc < s or yc < s or xc+s >= w or yc+s >= h:
+                # too close to edge
+                continue
+            plt.subplot(R,C,k+1)
+            plotimg = fit_img[yc-s:yc+s+1, xc-s:xc+s+1]
+            plt.imshow(plotimg, interpolation='nearest', origin='lower',
+                       vmin=-2.*s1, vmax=10.*s1, cmap='gray', extent=[xc-s, xc+s, yc-s, yc+s])
+            ax = plt.axis()
+            #plt.plot(xc, yc, 'o', mec='r', mfc='none', ms=20)
+            plt.plot([xc-Rfit, xc-Rfit, xc+Rfit, xc+Rfit, xc-Rfit],
+                     [yc-Rfit, yc+Rfit, yc+Rfit, yc-Rfit, yc-Rfit], 'r-')
+            plt.axis(ax)
+        plt.suptitle('Fitted Gaia source positions')
+        ps.savefig()
+
+        plt.clf()
+        plt.subplots_adjust(hspace=0, wspace=0)
+        R,C = 4,5
+        for k,sourceid in enumerate(plot_gaia_sourceid):
+            i = sourceid_to_index.get(sourceid, -1)
+            if i == -1:
+                continue
+            plt.subplot(R,C,k+1)
+            ok,xc,yc = wcs.radec2pixelxy(phot.ra_fit[i], phot.dec_fit[i])
+            xc = int(xc)
+            yc = int(yc)
+            mh,mw = mods[i].shape
+            plt.imshow(mods[i], interpolation='nearest', origin='lower',
+                       vmin=-2.*s1, vmax=10.*s1, cmap='gray', extent=[xc-mw/2, xc+mw/2, yc-mh/2, yc+mh/2])
+            plt.plot([xc-Rfit, xc-Rfit, xc+Rfit, xc+Rfit, xc-Rfit],
+                     [yc-Rfit, yc+Rfit, yc+Rfit, yc-Rfit, yc-Rfit], 'r-')
+            plt.axis([xc-s, xc+s, yc-s, yc+s])
+        plt.suptitle('Fitted models')
+        ps.savefig()
+
+        
     phot.raoff  = (refs.ra_now  - phot.ra_fit ) * 3600. * np.cos(np.deg2rad(refs.dec_now))
     phot.decoff = (refs.dec_now - phot.dec_fit) * 3600.
 
@@ -1543,51 +1581,11 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
 
     dmag = refs.legacy_survey_mag - phot.instpsfmag
     maglo, maghi = imobj.get_photocal_mag_limits()
-    print(refs.legacy_survey_mag)
-    kept = (refs.photom &
+    kept = (refs.use_for_photometry &
             (refs.legacy_survey_mag > maglo) &
             (refs.legacy_survey_mag < maghi) &
             np.isfinite(dmag))
     dmag = dmag[kept]
-    print(dmag)
-
-    if len(dmag) == 0:
-        filtered_mags = [v for v in refs.legacy_survey_mag if v < maglo]
-        print("The next photometric reference closest to mag limits is...", max(filtered_mags))
-        maglo = max(filtered_mags) - 0.01
-        dmag = refs.legacy_survey_mag - phot.instpsfmag
-        kept = (refs.photom &
-                (refs.legacy_survey_mag > maglo) &
-                (refs.legacy_survey_mag < maghi) &
-                np.isfinite(dmag))
-        dmag = dmag[kept]
-
-    if ps is not None:
-        sourceid_to_index = dict([(s,i) for i,s in enumerate(refs.gaia_sourceid)])
-        plt.clf()
-        plt.subplots_adjust(hspace=0, wspace=0)
-        R,C = 4,5
-        for k,sourceid in enumerate(plot_gaia_sourceid):
-            i = sourceid_to_index.get(sourceid, -1)
-            if i == -1:
-                continue
-            ok,xc,yc = wcs.radec2pixelxy(phot.ra_fit[i], phot.dec_fit[i])
-            xc = int(xc)
-            yc = int(yc)
-            h,w = fit_img.shape
-            if xc < s or yc < s or xc+s >= w or yc+s >= h:
-                # too close to edge
-                continue
-            plt.subplot(R,C,k+1)
-            plotimg = fit_img[yc-s:yc+s+1, xc-s:xc+s+1]
-            plt.imshow(plotimg, interpolation='nearest', origin='lower',
-                       vmin=-2.*s1, vmax=10.*s1, cmap='gray', extent=[xc-s, xc+s, yc-s, yc+s])
-            ax = plt.axis()
-            plt.plot([xc-Rfit, xc-Rfit, xc+Rfit, xc+Rfit, xc-Rfit],
-                     [yc-Rfit, yc+Rfit, yc+Rfit, yc-Rfit, yc-Rfit], 'r-')
-            plt.axis(ax)
-        plt.suptitle('Fitted Gaia source positions')
-        ps.savefig()
 
     if len(dmag):
         print('Zeropoint: using', len(dmag), 'good stars')
@@ -1715,17 +1713,20 @@ def run_zeropoints(imobj, splinesky=False, gxp_photom=False, ps=None):
     return ccds, phot
 
 def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
-                        psf, ccd_x0, ccd_y0, normalize_psf=True):
+                        psf, ccd_x0, ccd_y0, Rfit=10, ps=None):
     import tractor
     from tractor import PixelizedPSF
     from tractor.brightness import LinearPhotoCal
 
-    plots = False
+    fitmods = []
+    
+    plots = (ps is not None)
     plot_this = plots
     nplots = 0
     if plots:
-        from astrometry.util.plotutils import PlotSequence
-        ps = PlotSequence('astromfit')
+        if ps is None:
+            from astrometry.util.plotutils import PlotSequence
+            ps = PlotSequence('astromfit')
 
     print('Fitting positions & fluxes of %i stars' % len(ref_ra))
 
@@ -1739,19 +1740,20 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
     cal.dx = []
     cal.dy = []
     cal.dflux = []
-    cal.psfsum = []
     cal.iref = []
     cal.chi2 = []
     cal.fracmasked = []
     nzeroivar = 0
     noffim = 0
 
+    plotstar = plots
+
     for istar,(ra,dec) in enumerate(zip(ref_ra, ref_dec)):
         _,x,y = wcs.radec2pixelxy(ra, dec)
         x -= 1
         y -= 1
         # Fitting radius
-        R = 10
+        R = Rfit
         H,W = img.shape
         xlo = int(x - R)
         ylo = int(y - R)
@@ -1764,29 +1766,13 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
             noffim += 1
             continue
         subimg = img[ylo:yhi+1, xlo:xhi+1]
-        # FIXME -- check that ierr is correct
         subie = ierr[ylo:yhi+1, xlo:xhi+1]
-
-        if False:
-            subpsf = psf.constantPsfAt(x, y)
-            psfsum = np.sum(subpsf.img)
-            if normalize_psf:
-                # print('Normalizing PsfEx model with sum:', s)
-                subpsf.img /= psfsum
-
-        psfimg = psf.getImage(x, y)
-        ph,pw = psf.img.shape
-        psfsum = np.sum(psfimg)
-        if normalize_psf:
-            psfimg /= psfsum
-        sz = R + 5
-        psfimg = psfimg[ph//2-sz:ph//2+sz+1, pw//2-sz:pw//2+sz+1]
-        subpsf = PixelizedPSF(psfimg)
-
         if np.all(subie == 0):
             nzeroivar += 1
             # print('Inverse-variance map is all zero')
             continue
+
+        subpsf = psf.constantPsfAt(x, y)
 
         tim = tractor.Image(data=subimg, inverr=subie, psf=subpsf)
         flux0 = ref_flux[istar]
@@ -1807,23 +1793,30 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
         tim.photocal = pc
         src.thawParam('pos')
 
-        if plots:
+        if plotstar:
             # Don't plot saturated stars
             h,w = subie.shape
             plot_this = (subie[h//2, w//2] > 0)
+            if not plot_this:
+                print('Not plotting star', istar, ': saturated center')
 
-        if plots and plot_this:
+        if plotstar and plot_this:
             import pylab as plt
             plt.clf()
             plt.subplot(2,2,1)
-            plt.imshow(subimg, interpolation='nearest', origin='lower')
+            mn,mx = np.percentile(subimg.ravel(), [5,99])
+            ima = dict(interpolation='nearest', origin='lower', vmin=mn, vmax=mx)
+            plt.imshow(subimg, **ima)
+            plt.title('image')
             plt.colorbar()
             plt.subplot(2,2,2)
             mod = tr.getModelImage(0)
-            plt.imshow(mod, interpolation='nearest', origin='lower')
+            plt.imshow(mod, **ima)
+            plt.title('model')
             plt.colorbar()
             plt.subplot(2,2,3)
             plt.imshow((subimg - mod) * subie, interpolation='nearest', origin='lower')
+            plt.title('chi')
             plt.colorbar()
             plt.suptitle('Before fitting: star #%i' % istar)
             ps.savefig()
@@ -1841,13 +1834,15 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
 
         mod = tr.getModelImage(0)
         chi = (subimg - mod) * subie
-        psfimg = mod / mod.sum()
+        proimg = mod / mod.sum()
         # profile-weighted chi-squared
-        cal.chi2.append(np.sum(chi**2 * psfimg))
+        cal.chi2.append(np.sum(chi**2 * proimg))
         # profile-weighted fraction of masked pixels
-        cal.fracmasked.append(np.sum(psfimg * (subie == 0)))
+        cal.fracmasked.append(np.sum(proimg * (subie == 0)))
+        del proimg
 
-        cal.psfsum.append(psfsum)
+        fitmods.append(mod)
+
         cal.x_ref.append(ccd_x0 + x_init + xlo)
         cal.y_ref.append(ccd_y0 + y_init + ylo)
         cal.x_fit.append(ccd_x0 + src.pos.x + xlo)
@@ -1860,23 +1855,27 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
         cal.dy.append(std[1])
         cal.dflux.append(std[2])
 
-        if plots and plot_this:
+        if plotstar and plot_this:
             plt.clf()
             plt.subplot(2,2,1)
-            plt.imshow(subimg, interpolation='nearest', origin='lower')
+            plt.imshow(subimg, **ima)
+            plt.title('image')
             plt.colorbar()
             plt.subplot(2,2,2)
             mod = tr.getModelImage(0)
-            plt.imshow(mod, interpolation='nearest', origin='lower')
+            plt.imshow(mod, **ima)
+            plt.title('model')
             plt.colorbar()
             plt.subplot(2,2,3)
             plt.imshow((subimg - mod) * subie, interpolation='nearest', origin='lower')
+            plt.title('chi')
             plt.colorbar()
             plt.suptitle('After')
             ps.savefig()
+
             nplots += 1
-            if nplots == 10:
-                plots = False
+            if nplots >= 10:
+                plotstar = False
 
     if nzeroivar > 0:
         print('Zero ivar for %d stars' % nzeroivar)
@@ -1884,7 +1883,19 @@ def tractor_fit_sources(imobj, wcs, ref_ra, ref_dec, ref_flux, img, ierr,
         print('Off image for %d stars' % noffim)
     cal.to_np_arrays()
     cal.ra_fit,cal.dec_fit = wcs.pixelxy2radec(cal.x_fit - ccd_x0 + 1, cal.y_fit - ccd_y0 + 1)
-    return cal
+
+    if plots:
+        # Show vector field of x,y shifts
+        plt.clf()
+        Q = plt.quiver(cal.x_ref, cal.y_ref, cal.x_fit - cal.x_ref, cal.y_fit - cal.y_ref,
+                       angles='xy', pivot='middle')#, scale=0.1, scale_units='xy')
+        plt.quiverkey(Q, 0.8, 0.95, 0.1, '0.1 pixels', labelpos='E', coordinates='axes')
+        plt.xlabel('Image X (pix)')
+        plt.ylabel('Image Y (pix)')
+        plt.title('Fit positional offset')
+        ps.savefig()
+
+    return cal, fitmods
 
 if __name__ == "__main__":
     main()

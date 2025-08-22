@@ -18,7 +18,7 @@ def make_coadd(brickname):
     #brickname = '0359m045'
     W = H = 3600
     pixscale = 0.262
-    bands = 'grz'
+    bands = 'gru'
     lanczos = True
     
     survey = LegacySurveyData()

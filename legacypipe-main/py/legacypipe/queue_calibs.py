@@ -233,6 +233,10 @@ def main(args):
         log(B.ra, B.dec)
         dlo,dhi = -90,90
         rlo,rhi = 0, 360
+    
+    elif opt.region == 'jet':
+        rlo, rhi = 120, 160
+        dlo, dhi = -40, -10
 
     elif opt.region == 'edr':
         # EDR:

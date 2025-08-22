@@ -99,7 +99,7 @@ def summary_plots(summaryfn, ps, drname):
     dd = dlo[2] - dlo[1]
     dlo[0] = dlo[1] - dd
 
-    for band in 'griz':
+    for band in 'gru':
 
         I = np.flatnonzero((dlo >= 21.5) * (dlo < 24.8))
         #I = np.flatnonzero((dlo >= 21.5))
@@ -126,7 +126,7 @@ def summary_plots(summaryfn, ps, drname):
         #plt.xlim(21.5, 25.)
         ps.savefig()
 
-    for band in 'griz':
+    for band in 'gru':
         c = list(reversed(np.cumsum(list(reversed(T.get('counts_gal_%s' % band))))))
         #N = np.sum(T.get('counts_gal_%s' % band))
         # Skip bin with no observations?
@@ -150,25 +150,13 @@ def summary_plots(summaryfn, ps, drname):
         ps.savefig()
 
 if __name__ == '__main__':
-    north = False
-    if north == True:
-        outfn = 'dr8-north-depth-concat.fits'
-        summaryfn = 'dr8-north-depth-summary.fits'
-        allfn = 'dr8-north-depth.fits'
-        basedir = '/global/project/projectdirs/cosmo/work/legacysurvey/dr8/north'
-        summarize_depths(basedir, outfn, summaryfn, allfn)
+    outfn = 'jet-depth-concat.fits'
+    summaryfn = 'jet-depth-summary.fits'
+    allfn = 'jet-depth.fits'
+    basedir = '/home/zxue/../../groups/carnegie_poc/zxue/jet/ugr_out'
+    summarize_depths(basedir, outfn, summaryfn, allfn)
 
-        ps = PlotSequence('depth')
-        summary_plots(summaryfn, ps, 'BASS+MzLS DR8')
-    else:
-        outfn = 'dr10-south-depth-concat.fits'
-        summaryfn = 'dr10-south-depth-summary.fits'
-        allfn = 'dr10-south-depth.fits'
-        #basedir = '/global/cfs/cdirs/cosmo/data/legacysurvey/dr10'
-        basedir = '/dvs_ro/cfs/cdirs/cosmo/data/legacysurvey/dr10/south'
-        summarize_depths(basedir, outfn, summaryfn, allfn)
-
-        ps = PlotSequence('depth')
-        summary_plots(summaryfn, ps, 'DECaLS DR10')
+    ps = PlotSequence('depth')
+    summary_plots(summaryfn, ps, 'MegaCam Jet')
     import sys
     sys.exit(0)

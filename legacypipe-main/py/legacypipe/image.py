@@ -455,6 +455,16 @@ class LegacySurveyImage(object):
 
     def get_exptime(self, primhdr):
         return primhdr.get('EXPTIME')
+        
+    def get_ha_deg(self, primhdr):
+        from astrometry.util.starutil_numpy import hmsstring2ra
+        # HA header is missing from some images
+        # eg, CFHT: XMM u-band cfht-xmm-u/776654p.fits.fz
+        #     DECam: DECam_CP-DR11/CP20220727/c4d_220727_234726_ooi_r_v1.fits.fz
+        hastr = primhdr.get('HA')
+        if hastr is None:
+            return np.nan
+        return hmsstring2ra(hastr)
 
     def get_pixscale(self, primhdr, hdr):
         return 3600. * np.sqrt(np.abs(hdr['CD1_1'] * hdr['CD2_2'] -
