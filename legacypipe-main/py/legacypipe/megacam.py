@@ -289,7 +289,7 @@ class MegaCamImage(LegacySurveyImage):
         # np.polyfit returns coefficients counting from the highest order, but enumerate() pairs the first entry with 0.
         # As such, reverse the order from np.polyfit
         u_coeffs = [
-                (-1.1,  2.0, [-0.03874056, 0.04384444, 0.01854843]),
+                (-1.0,  1.85, [-0.03997513, 0.0448199, 0.02125202]),
                # ( 0.5,  2.5, [ -0.0687748, 0.09175484]),
                # ( 2.5, 4.15, [ 1.93843559, -1.35614424, 0.2572292])
                 ]

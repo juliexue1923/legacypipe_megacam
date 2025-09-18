@@ -86,7 +86,7 @@ class GaiaCatalog(HealpixedCatalog):
     def get_healpix_catalog(self, healpix):
         from astrometry.util.fits import fits_table
         fname = self.fnpattern % dict(hp=healpix)
-        #fname = fname.replace('chunk', 'gaia')
+        fname = fname.replace('chunk', 'gaia')
         print('Reading', fname)
         return fits_table(fname)
 
